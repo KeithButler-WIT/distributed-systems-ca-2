@@ -39,9 +39,9 @@ export class EDAAppStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.minutes(30),
     });
 
-    const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
-    });
+    // const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
+    //   receiveMessageWaitTime: cdk.Duration.seconds(10),
+    // });
 
     const newImageTopic = new sns.Topic(this, "NewImageTopic", {
       displayName: "New Image topic",
@@ -64,7 +64,7 @@ export class EDAAppStack extends cdk.Stack {
       deadLetterQueue: {
         queue: badImagesQueue,
         // # of rejections (lambda function)
-        maxReceiveCount: 2,
+        maxReceiveCount: 1,
       },
     });
 
@@ -148,18 +148,18 @@ export class EDAAppStack extends cdk.Stack {
 
     processImageFn.addEventSource(
       new events.SqsEventSource(ImagesQueue, {
-        batchSize: 5,
+        // batchSize: 5,
         maxBatchingWindow: cdk.Duration.seconds(5),
-        maxConcurrency: 2,
+        maxConcurrency: 3,
       })
     );
-    processImageFn.addEventSource(
-      new events.SqsEventSource(badImagesQueue, {
-        batchSize: 5,
-        maxBatchingWindow: cdk.Duration.seconds(5),
-        maxConcurrency: 2,
-      })
-    );
+    // processImageFn.addEventSource(
+    //   new events.SqsEventSource(badImagesQueue, {
+    //     // batchSize: 5,
+    //     maxBatchingWindow: cdk.Duration.seconds(5),
+    //     maxConcurrency: 2,
+    //   })
+    // );
 
     
     // const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
