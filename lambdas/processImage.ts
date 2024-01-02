@@ -77,6 +77,19 @@ export const handler: SQSHandler = async (event) => {
           throw new Error("Unsupported image type: ${imageType. ");
         }
         // process image upload 
+        let origimage = null;
+        try {
+          // Download the image from the S3 source bucket.
+          const params: PutObjectCommandInput = {
+            Bucket: srcBucket,
+            Key: srcKey,
+          };
+          origimage = await s3.send(new PutObjectCommand(params));
+          // Process the image ......
+        } catch (error) {
+          console.log(error);
+        }
+
       }
     }
   }
