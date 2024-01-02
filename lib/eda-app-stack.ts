@@ -8,6 +8,9 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as custom from "aws-cdk-lib/custom-resources";
+
 
 import { Construct } from "constructs";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -20,6 +23,14 @@ export class EDAAppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       publicReadAccess: false,
+    });
+
+    const imagesTable = new dynamodb.Table(this, "ImagesTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "name", type: dynamodb.AttributeType.STRING },
+      // sortKey: { name: "name", type: dynamodb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      tableName: "Images",
     });
 
     // Integration infrastructure
@@ -64,11 +75,15 @@ export class EDAAppStack extends cdk.Stack {
       this,
       "ProcessImageFn",
       {
-        // architecture: lambda.Architecture.ARM_64,
+        architecture: lambda.Architecture.ARM_64,
         runtime: lambda.Runtime.NODEJS_18_X,
         entry: `${__dirname}/../lambdas/processImage.ts`,
         timeout: cdk.Duration.seconds(15),
         memorySize: 128,
+        environment: {
+          TABLE_NAME: imagesTable.tableName,
+        },
+  
       }
     );
 
@@ -83,14 +98,31 @@ export class EDAAppStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_16_X,
       memorySize: 1024,
       timeout: cdk.Duration.seconds(3),
-      entry: `${__dirname}/../lambdas/handleBadOrder.ts`,
+      entry: `${__dirname}/../lambdas/handleBadImage.ts`,
     });
+
+    // new custom.AwsCustomResource(this, "imagesddbInitData", {
+    //   onCreate: {
+    //     service: "DynamoDB",
+    //     action: "batchWriteItem",
+    //     parameters: {
+    //       RequestItems: {
+    //         [imagesTable.tableName]: generateBatch(),
+    //       },
+
+    //     },
+    //     physicalResourceId: custom.PhysicalResourceId.of("imagesddbInitData"), //.of(Date.now().toString()),
+    //   },
+    //   policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
+    //     resources: [imagesTable.tableArn],
+    //   }),
+    // });
 
     // Event triggers
 
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
-      new s3n.SnsDestination(newImageTopic),  // Changed
+      new s3n.SnsDestination(newImageTopic),
       // {suffix: 'jpeg'}
     );
 
@@ -102,10 +134,10 @@ export class EDAAppStack extends cdk.Stack {
     // );
 
     newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ, {
-      filterPolicy: {
-        source: sns.SubscriptionFilter.stringFilter({
-          matchPrefixes: ['jpeg','png']
-      })},
+      // filterPolicy: {
+        // source: sns.SubscriptionFilter.stringFilter({
+          // matchPrefixes: ['jpeg','png']
+      // })},
     })
     );
 
@@ -153,7 +185,7 @@ export class EDAAppStack extends cdk.Stack {
 
     // Permissions
 
-    imagesBucket.grantRead(processImageFn);
+    imagesBucket.grantReadWrite(processImageFn);
 
     mailerFn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -178,6 +210,9 @@ export class EDAAppStack extends cdk.Stack {
         resources: ["*"],
       })
     );
+
+    imagesTable.grantReadWriteData(processImageFn)
+
 
     // Output
     
