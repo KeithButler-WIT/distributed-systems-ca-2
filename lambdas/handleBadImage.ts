@@ -34,15 +34,37 @@ export const handler: SQSHandler = async (event: any) => {
         const s3e = messageRecord.s3;
         const srcBucket = s3e.bucket.name;
         // Object key may have spaces or unicode non-ASCII characters.
-        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
         try {
-          const { name, email, message }: ContactDetails = {
-            name: "The Photo Album",
-            email: SES_EMAIL_FROM,
-            message: `Image format not supported. Needs to be with jpeg or png.`,
-          };
-          const params = sendEmailParams({ name, email, message });
-          await client.send(new SendEmailCommand(params));
+          const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
+          // Infer the image type from the file suffix.
+          const typeMatch = srcKey.match(/\.([^.]*)$/);
+          if (!typeMatch) {
+            const { name, email, message }: ContactDetails = {
+              name: "The Photo Album",
+              email: SES_EMAIL_FROM,
+              message: `Image has no format. Needs to be with jpeg or png.`,
+            };
+            const params = sendEmailParams({ name, email, message });
+            await client.send(new SendEmailCommand(params));
+          }
+
+          if (typeMatch === null) {
+            console.log("Could not determine the image type.");
+            throw new Error("Could not determine the image type. ");
+          }
+
+          // Check that the image type is supported
+          const imageType = typeMatch[1].toLowerCase();
+          if (imageType != "jpeg" && imageType != "png") {
+            const { name, email, message }: ContactDetails = {
+              name: "The Photo Album",
+              email: SES_EMAIL_FROM,
+              message: `Image format not supported. Needs to be with jpeg or png.`,
+            };
+            const params = sendEmailParams({ name, email, message });
+            await client.send(new SendEmailCommand(params));
+          }
+          
         } catch (error: unknown) {
           console.log("ERROR is: ", error);
           // return;
