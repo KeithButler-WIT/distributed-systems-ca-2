@@ -24,6 +24,10 @@ export class EDAAppStack extends cdk.Stack {
 
     // Integration infrastructure
 
+    const badImagesQueue = new sqs.Queue(this, "bad-images-q", {
+      retentionPeriod: cdk.Duration.minutes(30),
+    });
+
     const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
@@ -35,6 +39,24 @@ export class EDAAppStack extends cdk.Stack {
     const mailerQ = new sqs.Queue(this, "mailer-queue", {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
+
+    const rejectionMailerQ = new sqs.Queue(this, "rejection-mailer-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    });
+
+
+    // const ImagesQueue = new sqs.Queue(this, "bad-orders-q", {
+    //   retentionPeriod: cdk.Duration.minutes(30),
+    // });
+
+    const ImagesQueue = new sqs.Queue(this, "images-queue", {
+      deadLetterQueue: {
+        queue: badImagesQueue,
+        // # of rejections (lambda function)
+        maxReceiveCount: 2,
+      },
+    });
+
 
     // Lambda functions
 
@@ -57,38 +79,95 @@ export class EDAAppStack extends cdk.Stack {
       entry: `${__dirname}/../lambdas/mailer.ts`,
     });
 
+    const rejectedMailerFn = new lambdanode.NodejsFunction(this, "rejection_mailer-function", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(3),
+      entry: `${__dirname}/../lambdas/handleBadOrder.ts`,
+    });
+
     // Event triggers
 
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
-      new s3n.SnsDestination(newImageTopic)  // Changed
+      new s3n.SnsDestination(newImageTopic),  // Changed
+      // {suffix: 'jpeg'}
     );
 
     newImageTopic.addSubscription(
-      new subs.SqsSubscription(imageProcessQueue)
+      new subs.SqsSubscription(ImagesQueue)
     );
-    newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+    // newImageTopic.addSubscription(
+      // new subs.SqsSubscription(mailerQ)
+    // );
+
+    newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ, {
+      filterPolicy: {
+        source: sns.SubscriptionFilter.stringFilter({
+          matchPrefixes: ['jpeg','png']
+      })},
+    })
+    );
+
+    newImageTopic.addSubscription(new subs.SqsSubscription(rejectionMailerQ));
 
 
-    const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
+    // Event sources for lambda functions
+
+    processImageFn.addEventSource(
+      new events.SqsEventSource(ImagesQueue, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5),
+        maxConcurrency: 2,
+      })
+    );
+    processImageFn.addEventSource(
+      new events.SqsEventSource(badImagesQueue, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5),
+        maxConcurrency: 2,
+      })
+    );
+
+    
+    // const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
+      // batchSize: 5,
+      // maxBatchingWindow: cdk.Duration.seconds(10),
+    // });
+
+    // processImageFn.addEventSource(newImageEventSource);
+
+    mailerFn.addEventSource(
+      new events.SqsEventSource(mailerQ, {
       batchSize: 5,
       maxBatchingWindow: cdk.Duration.seconds(10),
-    });
+    }));
 
-    processImageFn.addEventSource(newImageEventSource);
-
-    const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
+    rejectedMailerFn.addEventSource(
+      new events.SqsEventSource(rejectionMailerQ, {
       batchSize: 5,
       maxBatchingWindow: cdk.Duration.seconds(10),
-    }); 
+    }));
 
-    mailerFn.addEventSource(newImageMailEventSource);
+    ImagesQueue.grantSendMessages(processImageFn);
 
     // Permissions
 
     imagesBucket.grantRead(processImageFn);
 
     mailerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          "ses:SendEmail",
+          "ses:SendRawEmail",
+          "ses:SendTemplatedEmail",
+        ],
+        resources: ["*"],
+      })
+    );
+
+    rejectedMailerFn.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
